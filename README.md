@@ -1,3 +1,146 @@
+# plato-ls (best-effort template and host diagnostics)
+
+This is a fork of [Helm LS](https://github.com/mrjosh/helm-ls). The `serve`
+command now runs an independent Plato-only stdio server; it never discovers
+charts, renders templates, invokes SOPS, or runs Helm lint. Build and check:
+
+```sh
+go test ./internal/plato ./cmds
+go build -o plato-ls .
+./plato-ls serve
+```
+
+Standalone source builds no longer need the sibling grammar checkout: generated
+Plato C parser artifacts and the Go binding are in
+`internal/tree-sitter/plato/`, with the original MIT license and SHA-256
+provenance in that directory's README. CGO and a C compiler are required.
+`make` produces `bin/plato-ls`. `.github/workflows/tests.yml` checks
+`go test -mod=readonly ./...` and `go build -mod=readonly -o plato-ls .` on
+the standalone checkout. The inherited Helm release workflow and GoReleaser
+configuration are archived, not Plato release instructions.
+
+Run `sh scripts/package-server.sh` to build and checksum a local native
+`dist/plato-ls-<os>-<arch>` executable. CI uploads separate Linux amd64/arm64
+and macOS amd64/arm64 workflow artifacts with `SHA256SUMS`; these are **not**
+published releases. Windows is unsupported. The embedded parser is
+Tree-sitter ABI 15. Linux artifacts are built on Ubuntu 24.04 and are not
+guaranteed compatible with older libc distributions.
+
+To exercise locally installed backends, set `PLATO_YAML_BACKEND` and
+`PLATO_BASH_BACKEND` to absolute executable paths before running
+`go test ./internal/plato`. The real YAML test asserts a duplicate-key range
+in an unchanged literal, clearing after an edit, and an explicitly selected
+local schema without a schema catalog; the Bash test checks an exact
+ShellCheck-backed source range and correction clearing when ShellCheck is
+available, or an explicit warning when it is missing. These tests use
+synthetic project-local data and never render Plato fixtures.
+
+Configure your editor to send `file://` documents to `plato-ls serve`. The
+server finds `plato.yaml` inside each workspace folder (or along the file's
+ancestor path if no folder was provided), reads only the `plato.source`,
+`plato.binary_extensions`, and `plato.delimiters` settings, and defaults to
+`templates` and `{{{` / `}}}`. It does not load values or secrets. Documents
+outside the source tree, configured `excludedPaths`, binary extensions,
+`.sops_enc` and `.symlink` files, normal symlinks, and files with a `.symlink`
+companion are skipped. An explicitly supplied `root` can work without a
+`plato.yaml`; an explicitly supplied missing `configPath` is diagnosed.
+
+Initialization options and `workspace/didChangeConfiguration` accept:
+
+```json
+{
+  "root": "/absolute/project",
+  "configPath": "plato.yaml",
+  "source": "templates",
+  "excludedPaths": ["private/*"],
+  "binaryExtensions": [".gem"],
+  "yamlBackend": "/absolute/path/to/yaml-language-server",
+  "bashBackend": "/absolute/path/to/bash-language-server",
+  "shellcheckPath": "/absolute/path/to/shellcheck",
+  "yamlSchemas": {
+    "file:///absolute/path/to/schema.json": ["*.yaml"]
+  }
+}
+```
+
+Only full-document change notifications are advertised. Open/change/save
+publish template syntax diagnostics; close and excluded documents publish an
+empty diagnostic list. Backend validation is opt-in via explicit executable
+paths; missing configured executables produce diagnostics. YAML uses
+`yaml-language-server --stdio` with the schema store disabled and only
+explicitly configured `yamlSchemas`. Schema keys must be absolute local
+`file:///` URIs; remote schema URLs are rejected. YAML modelines and root
+`$schema` properties selecting unconfigured schemas are neutralized only in
+the in-memory projection (the source document is unchanged). This prevents
+unconfigured fetches from those directives while preserving byte and UTF-16
+offsets. Explicitly configured local schemas can themselves contain remote
+`$ref` entries; this server does not sandbox trusted schema contents.
+Bash uses
+`bash-language-server start`;
+when ShellCheck is absent a warning explains that Bash validation is
+incomplete. `.yaml`/`.yml` extensions select YAML even with a Bash shebang;
+`.sh`/`.bash` select Bash; other names with `bash` or `sh` shebangs also select
+Bash. Other extensions without a recognized shebang remain template-only.
+Neovim-only per-buffer host overrides are not transmitted to this server.
+
+An integration that launches only `{server, "serve"}` can opt in without
+changing its command: set `PLATO_LS_YAML_BACKEND`,
+`PLATO_LS_BASH_BACKEND`, and optionally `PLATO_LS_SHELLCHECK_PATH` in the
+editor's environment to absolute executable paths. Explicit LSP settings
+override these environment values. With no configured backend, the startup
+notice accurately describes template-only diagnostics; having backend tools
+on `PATH` alone never silently enables them.
+
+Parsing uses Go `text/template` with **names** of Sprig and Plato functions,
+without calling them. A local `tree-sitter-plato` Go binding selects unchanged
+literal spans for in-memory backend documents. Action spans are masked with
+spaces or a synthetic `x` placeholder; diagnostic ranges are mapped through
+UTF-16 positions to the original URI only when wholly attributable to a
+literal span on a line without synthetic text. Backend documents have
+version-specific virtual URIs to discard stale results even from servers that
+omit diagnostic versions. Control flow, trim markers, `ToYAML`, substitutions
+in documents containing YAML block scalars or Bash heredocs disable host
+diagnostic mapping and produce an explanatory warning. This conservative
+whole-document rule favors withholding diagnostics over attributing errors
+to unknown generated structure. No templates are
+rendered, no secrets are loaded, and subprocess stderr is discarded rather
+than risking document content in logs.
+
+Only text-document synchronization and workspace-folder changes are advertised.
+Completion, hover, signature help, definition, references, rename, document
+and workspace symbols, formatting, folding, semantic tokens, code actions,
+and command execution are not implemented; unsolicited requests for them
+receive a JSON-RPC method-not-found error rather than entering Helm code.
+
+An empty diagnostic list does **not** mean the rendered YAML or Bash is valid:
+projections can omit dynamic branches and generated structure, and dependent
+diagnostics are withheld. Runtime values, function arguments, custom template
+delimiters, cross-file navigation, and highlighting are not implemented here.
+Use a separate parser/editor integration for highlighting.
+No YAML/Bash tool is automatically invoked without explicit configuration.
+
+Incomplete acceptance gates from the implementation plan:
+
+- Grammar/release: Go builds use the vendored generated parser, while the
+  sibling grammar remains the source for future deliberate regeneration. No
+  platform artifacts or supported ABI range have been published as a release;
+  the local platform package/checksum build has been exercised on Linux arm64.
+- YAML/Bash projection: conservative line/literal-only mapping does not prove
+  generated-output validity. Full branch-aware validation requires explicit
+  rendering with values and is outside this server's safety contract.
+- Backend integration: YAML literal/schema diagnostics and Bash ShellCheck
+  diagnostics are opt-in tested with installed tools; other Bash syntax cases
+  and projected constructs (for example heredocs and nested branches) remain
+  outside those integration checks.
+- Editor end-to-end and release packaging: Neovim integration lives in a
+  sibling project and is exercised independently. Multi-platform workflow
+  artifact jobs have not yet run here; there is no published release binary.
+
+The following documentation is from upstream Helm LS for attribution and is
+**not applicable to the Plato `serve` command**:
+
+---
+
 [![Lint](https://github.com/mrjosh/helm-ls/actions/workflows/lint.yml/badge.svg)](https://github.com/mrjosh/helm-ls/actions/workflows/lint.yml)
 [![Tests](https://github.com/mrjosh/helm-ls/actions/workflows/tests.yml/badge.svg)](https://github.com/mrjosh/helm-ls/actions/workflows/tests.yml)
 [![Release](https://github.com/mrjosh/helm-ls/actions/workflows/artifacts.yml/badge.svg)](https://github.com/mrjosh/helm-ls/releases/latest)

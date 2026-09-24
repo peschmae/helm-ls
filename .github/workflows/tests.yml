@@ -1,32 +1,59 @@
-permissions:
-  contents: read
-name: Tests
+name: Plato Go source build
 
 on:
   push:
-    branches:
-      - "master"
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  tests:
-    name: tests
-    strategy:
-      matrix:
-        go-version: [1.23]
-        os: [ubuntu-latest, macos-latest, windows-2022]
-    runs-on: ${{ matrix.os }}
+  plato-go:
+    name: Go tests and build
+    runs-on: ubuntu-latest
     steps:
-      - name: Install Go
-        uses: actions/setup-go@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          go-version: ${{ matrix.go-version }}
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install testrunner
-        run: make install-testrunner
-
-      - name: Run tests
-        run: make test
+          go-version-file: go.mod
+          cache: true
+      - name: Test standalone checkout
+        run: go test -mod=readonly ./...
+      - name: Build Plato CLI
+        run: go build -mod=readonly -o plato-ls .
+  package:
+    name: Package ${{ matrix.platform }}-${{ matrix.arch }}
+    needs: plato-go
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
+          - runner: macos-15-intel
+            platform: macos
+            arch: amd64
+          - runner: macos-15
+            platform: macos
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build and verify native artifact
+        run: sh scripts/package-server.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plato-ls-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            dist/plato-ls-${{ matrix.platform }}-${{ matrix.arch }}
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14

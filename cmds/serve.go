@@ -3,20 +3,19 @@ package cmds
 import (
 	"os"
 
-	"github.com/mrjosh/helm-ls/internal/handler"
+	"github.com/mrjosh/helm-ls/internal/plato"
 	"github.com/spf13/cobra"
 )
 
 func newServeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Start helm lint language server",
+		Short: "Start Plato template language server",
+		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
-			handler.StartHandler(stdrwc{})
+			plato.Serve(stdrwc{})
 		},
 	}
-
-	cmd.Flags().Bool("stdio", true, "Use stdio")
 
 	return cmd
 }

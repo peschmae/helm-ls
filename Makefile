@@ -2,8 +2,6 @@ export ROOT=$(realpath $(dir $(firstword $(MAKEFILE_LIST))))
 export BIN=$(ROOT)/bin
 export GOBIN?=$(BIN)
 export GO=$(shell which go)
-export PACKAGE_NAME=github.com/mrjosh/helm-ls
-export GOLANG_CROSS_VERSION=v1.23
 export CGO_ENABLED=1
 
 $(eval GIT_COMMIT=$(shell git rev-parse --short HEAD))
@@ -38,7 +36,8 @@ export LINTERCMD=run --no-config -v \
 	--enable=gosimple
 
 all:
-	@$(GO) build -ldflags ${GO_LDFLAGS} -o bin/helm_ls .
+	@mkdir -p $(BIN)
+	@$(GO) build -ldflags ${GO_LDFLAGS} -o $(BIN)/plato-ls .
 
 # lint runs vet plus a number of other checkers, it is more comprehensive, but louder
 lint:
@@ -84,19 +83,3 @@ test-update-snaps: test
 
 coverage:
 	@$(GO) test -coverprofile=.coverage -tags=integration -coverpkg=./internal/... ./internal/... && go tool cover -html=.coverage
-
-.PHONY: build-release
-build-release:
-	@docker run \
-			--rm \
-			-e CGO_ENABLED=1 \
-			-e COMPILED_BY=$(COMPILED_BY) \
-			-e VERSION=$(BRANCH_NAME) \
-			-e BRANCH_NAME=$(BRANCH_NAME) \
-			-e BUILD_TIME=$(BUILD_TIME) \
-			-e GIT_COMMIT=$(GIT_COMMIT) \
-			-v /var/run/docker.sock:/var/run/docker.sock \
-			-v `pwd`:/go/src/$(PACKAGE_NAME) \
-			-w /go/src/$(PACKAGE_NAME) \
-			ghcr.io/goreleaser/goreleaser-cross:${GOLANG_CROSS_VERSION} \
-			--clean --skip=validate,publish --snapshot

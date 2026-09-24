@@ -20,12 +20,8 @@ var (
 
 func main() {
 	rootCmd := &cobra.Command{
-		Use: "helm_ls",
-		Long: `
-  /\  /\___| |_ __ ___   / / ___ 
- / /_/ / _ \ | '_ ' _ \ / / / __|
-/ __  /  __/ | | | | | / /__\__ \
-\/ /_/ \___|_|_| |_| |_\____/___/`,
+		Use:   "plato-ls",
+		Short: "Plato template language server",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},
